@@ -60,8 +60,8 @@ implied warranties, other than those that are expressly stated in the License.
 #define DWORD_SIZE 4
 #define INPUT_WIDTH_ALIGNED_TO_DWORD ((INPUT_WIDTH * DT_IN_SIZE) % DWORD_SIZE == 0)
 
-#define DPAS_INPUT_CHANNELS (DPAS_DEPTH * sizeof(DT_IN))
-#define DPAS_OUTPUT_CHANNELS EXEC_SIZE
+#define DPAS_INPUT_CHANNELS (DPAS_DEPTH * sizeof(DT_IN)) // 8 x 2
+#define DPAS_OUTPUT_CHANNELS EXEC_SIZE   // 8
 #define DPAS_RC BLOCK_W
 
 #define CONV_LOOP_COUNT ((INPUT_CHANNELS/DPAS_INPUT_CHANNELS) / SLICE_IC)
@@ -125,12 +125,12 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     return data_out;
 }
 
-_GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(SurfaceIndex surface [[type("buffer_t")]], uint32_t byte_offset)
+_GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(SurfaceIndex surface [[type("buffer_t")]], uint32_t byte_offset)  // reorder_weight.cpp
 {
     static_assert(KERNEL_SIZE == 1, "Weights loading in this kernel is implemented only for 1x1 weights size");
-    const uint32_t PACKED_ELEMENT = sizeof(uint32_t)/ sizeof(DT_WEIGHTS);
-    const uint32_t INPUT_CHANNELS_CHUNKS = DPAS_INPUT_CHANNELS / PACKED_ELEMENT;
-    const uint32_t LOAD_SIZE = PACKED_ELEMENT * DPAS_OUTPUT_CHANNELS;
+    const uint32_t PACKED_ELEMENT = sizeof(uint32_t)/ sizeof(DT_WEIGHTS); // 2
+    const uint32_t INPUT_CHANNELS_CHUNKS = DPAS_INPUT_CHANNELS / PACKED_ELEMENT;   // = dpas_depth
+    const uint32_t LOAD_SIZE = PACKED_ELEMENT * DPAS_OUTPUT_CHANNELS;  // 2*8 = load size for one stage
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> data_out;
 #if !WEIGHTS_IN_OPTIMAL_FORMAT
     vector<DT_WEIGHTS, DPAS_INPUT_CHANNELS> data_load;
@@ -147,7 +147,7 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
         }
 
     }
-#else
+#else  //manage 
     vector_ref<uint32_t, 64> data_load_view =data_out.format<uint32_t>();
     data_load_view = cm_load<uint32_t, 64, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, byte_offset);  
 #endif
@@ -228,7 +228,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint32_t weights_oc_chunk_offset = EXEC_SIZE * DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
     const uint32_t weights_ic_offset_size = OUTPUT_CHANNELS * DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
 #else
-    const uint32_t weights_oc_chunk_offset = DPAS_OUTPUT_CHANNELS * INPUT_CHANNELS * sizeof(DT_WEIGHTS);
+    const uint32_t weights_oc_chunk_offset = DPAS_OUTPUT_CHANNELS * INPUT_CHANNELS * sizeof(DT_WEIGHTS); 
     const uint32_t weights_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
 #endif
 

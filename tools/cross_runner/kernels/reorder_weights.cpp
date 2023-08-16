@@ -108,9 +108,9 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
         #pragma unroll
         for(int j = 0; j < DPAS_EXEC_SIZE; j++)
         {
-            data_out.select<dpas_input_channels, 1>(j * dpas_input_channels) = data_input.select<DPAS_EXEC_SIZE, 1, int_block, 1>(0, int_block * j + i * dpas_input_channels);
+            data_out.select<dpas_input_channels, 1>(j * dpas_input_channels) = data_input.select<DPAS_EXEC_SIZE, 1, int_block, 1>(0, int_block * j + i * dpas_input_channels); // why it is linear?
         }
-        const uint32_t packed_size = (DPAS_EXEC_SIZE * dpas_input_channels)/2;
+        const uint32_t packed_size = (DPAS_EXEC_SIZE * dpas_input_channels)/2; //2 = INT32/FP16
         cm_store<uint32_t, packed_size>(surface_output, output_offset, data_out.format<uint32_t>());
         output_offset += OC * dpas_input_channels * sizeof(OUTPUT_TYPE);
     }

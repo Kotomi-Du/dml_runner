@@ -146,8 +146,8 @@ inline std::string data_layout_name(DataLayout l)
     case DataLayout::eNCHW: return "NCHW";
     case DataLayout::eNHWC: return "NHWC";
     case DataLayout::eW:    return "W";
-    case DataLayout::eOIYX: return "OIYX";
-    case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
+    case DataLayout::eOIYX: return "OIYX"; //N-O C-I H-Y W-X
+    case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2"; //BLOCK a special layout required by dpas
     case DataLayout::eOYXI_o8:  return "OYXI_o8";
     case DataLayout::eOYXI_o16: return "OYXI_o16";
     default:
@@ -232,6 +232,7 @@ inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real
     for (auto i = 0; i < container.size() / sizeof(Dt); i++)
     {
         ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(dist(gen));
+        //std::cout << DirectX::PackedVector::XMConvertHalfToFloat(ptr[i]) << ";";
     }
 }
 
