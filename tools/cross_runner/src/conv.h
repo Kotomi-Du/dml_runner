@@ -127,7 +127,8 @@ public:
         }
         else
         {
-            throw_with_msg("Unknown activation type!");
+            activation_desc.Type = DML_OPERATOR_INVALID;
+            //throw_with_msg("Unknown activation type!");
         }
 
         desc.FusedActivation = activation_desc.Type == DML_OPERATOR_INVALID ? nullptr : &activation_desc;
