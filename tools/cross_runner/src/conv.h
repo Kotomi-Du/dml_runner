@@ -129,7 +129,7 @@ public:
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
 
-        throw_if_failed(dml_device->CompileOperator(
+        throw_if_failed(dml_device->CompileOperator(  // trigger driver code to select suitable kernel.
             dml_operator_.Get(),
             exec_flags,
             IID_PPV_ARGS(dml_op_executor_.ReleaseAndGetAddressOf())), "create softmax compiled operator");
