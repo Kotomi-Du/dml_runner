@@ -168,7 +168,7 @@ public:
 
         D3D12_COMPUTE_PIPELINE_STATE_DESC compute_pso_desc = {};
         compute_pso_desc.pRootSignature = root_signature;
-        compute_pso_desc.CS = CD3DX12_SHADER_BYTECODE(nullptr, 0);
+        compute_pso_desc.CS = CD3DX12_SHADER_BYTECODE(nullptr, 0); //compute shader
 
         INTC_D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc_csext = {};
         pso_desc_csext.pD3D12Desc = &compute_pso_desc;

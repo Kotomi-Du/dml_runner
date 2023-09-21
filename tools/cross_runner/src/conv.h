@@ -534,7 +534,7 @@ public:
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.001f);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -993,7 +993,7 @@ private:
             {
                 // input, filter
                 const std::vector<DescType> desc_list = { DescType::eSrv, DescType::eUav };
-                root_signature_ = create_root_signature(d3d12_device_, desc_list);
+                root_signature_ = create_root_signature(d3d12_device_, desc_list);  // A Collection of Arranged Descriptor Tables; Determine Resources Access Order Matching the Shaders during Compilation
                 assert(root_signature_);
             }
 
