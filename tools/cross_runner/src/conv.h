@@ -629,7 +629,7 @@ public:
         , conv_(params_.input_shape, to_dml_tensor_policy(params_.input_layout),
             get_output_shape(), to_dml_tensor_policy(params_.output_layout),
             params_.filter_shape, to_dml_tensor_policy(params_.filter_layout),
-            to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, params_.managed_weights,
+            to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, params_.managed_weights, params_.reuse_cmd,
             dml_device, d3d12_device)
     {
     }
