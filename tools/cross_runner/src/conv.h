@@ -140,7 +140,12 @@ public:
         throw_if_failed(dml_device->CreateOperator(
             &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create convolution operator");
 
-        DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_NONE;
+        if (allow_reuse_commandlist)
+        {
+            exec_flags |= DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        }
+       
         if (allow_fp16_computations)
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
@@ -643,14 +648,14 @@ public:
     {
         conv_.create_binding_tables(cpu_handle, gpu_handle);
         conv_.record_initialize(dml_cmd_recorder_, cmd_list, filter_buffer_.Get(), bias_buffer_.Get());
-        if (conv_.reuse_commandlist)
-        {
-            conv_.build_reusable_commandlist(dml_cmd_recorder_, cmd_list);
-        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
+        if (conv_.reuse_commandlist)
+        {
+            conv_.build_reusable_commandlist(dml_cmd_recorder_, cmd_list);
+        }
         conv_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
     }
 
