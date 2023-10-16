@@ -146,6 +146,20 @@ public:
         }
     }
 
+
+    virtual void build_reusable_commandlist(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    {
+        const auto execute_binding_properties = dml_op_executor_->GetBindingProperties();
+        if (execute_binding_properties.PersistentResourceSize > 0 && persistent_buffer_)
+        {
+            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
+            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_exec_binding_table->BindPersistentResource(&binding_desc);
+        }
+        dml_cmd_recorder->RecordDispatch(cmd_list, dml_op_executor_.Get(), dml_exec_binding_table.Get());
+    }
+
 protected:
     virtual void create_operator_impl()
     {
@@ -211,6 +225,22 @@ protected:
 
         dml_cmd_recorder->RecordDispatch(cmd_list, dml_op_executor_.Get(), dml_exec_binding_table.Get());
     }
+
+    virtual void execute_reuse_commandlist(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list,
+        const std::vector<DML_BINDING_DESC>& input_bindings, const std::vector<DML_BINDING_DESC>& output_bindings)
+    {
+        const auto execute_binding_properties = dml_op_executor_->GetBindingProperties();
+        if (execute_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
+        {
+            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_exec_binding_table->BindTemporaryResource(&binding_desc);
+        }
+
+        dml_exec_binding_table->BindInputs(static_cast<std::uint32_t>(input_bindings.size()), input_bindings.data());
+        dml_exec_binding_table->BindOutputs(static_cast<std::uint32_t>(output_bindings.size()), output_bindings.data());
+    }
+
 
 protected:
     IDMLDevice* dml_device_;

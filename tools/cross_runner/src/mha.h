@@ -17,7 +17,7 @@ namespace gpu_op
     public:
         Mha(MhaType mha_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
             const TensorShape& shape_input,  const TensorShape& shape_out,
-            IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
+            IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false, bool allow_reuse_commandlist = false)
             :DirectMlBaseNode(dml_device, d3d12_device)
         {
             if (mha_type == MhaType::MhaType_QKV)  // todo: move some codes out as general code for other mha types
@@ -83,7 +83,12 @@ namespace gpu_op
                 throw_if_failed(dml_device->CreateOperator(
                     &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create Multihead Attention operator");
 
-                DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_NONE; //| DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+                DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_NONE; 
+                if (allow_reuse_commandlist)
+                {
+                    exec_flags |= DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+                }
+                
                 if (data_type == DML_TENSOR_DATA_TYPE_FLOAT16)
                 {
                     exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
@@ -100,6 +105,8 @@ namespace gpu_op
                     IID_PPV_ARGS(dml_op_executor_.ReleaseAndGetAddressOf())), "create Multihead Attention compiled operator");
 
                 create_operator_impl();
+                reuse_commandlist = allow_reuse_commandlist;
+
             }else{
                 assert(false && "Unsupported MHA type!");
             }
@@ -144,7 +151,16 @@ namespace gpu_op
             output_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr });
             output_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr });
            
-            record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
+            if (reuse_commandlist)
+            {
+                execute_reuse_commandlist(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
+
+            }
+            else
+            {
+                record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
+            }
+           
         }
 
         virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
@@ -171,6 +187,10 @@ namespace gpu_op
                 dml_init_binding_table.Get());
 
         }
+
+    public:
+        bool reuse_commandlist;
+
     private:
         ComPtr<IDMLOperator> dml_operator_;
         DML_BUFFER_TENSOR_DESC tensor_stacked_qkv_desc_;
@@ -190,6 +210,7 @@ class MhaBaseDispatcher: public NodeDispatcher
             DataLayout layout;
 
             TensorShape shape_input;
+            bool reuse_cmd = true;
 
             inline static void add_cli_options(CLI::App* opts, create_params_t& params)
             {
@@ -201,8 +222,9 @@ class MhaBaseDispatcher: public NodeDispatcher
                     ->check(CLI::IsMember({ MhaType::MhaType_QKV }))->
                     transform(CLI::Transformer(std::map<std::string, MhaType>{
                         { "qkv", MhaType::MhaType_QKV },
-
                 }, CLI::ignore_case))->required();
+                
+                opts->add_flag("--reuse_cmd", params.reuse_cmd);
             }
         };
 
@@ -406,7 +428,7 @@ public:
     MhaDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : MhaBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , mha_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_input,  get_shape_output(),
-            dml_device, d3d12_device, false)
+            dml_device, d3d12_device, false, params_.reuse_cmd)
     {
 
     }
@@ -425,6 +447,10 @@ public:
 
     void execute(ID3D12GraphicsCommandList* cmd_list)
     {
+        if (mha_.reuse_commandlist)
+        {
+            mha_.build_reusable_commandlist(dml_cmd_recorder_, cmd_list);
+        }
         mha_.record_execute(dml_cmd_recorder_, cmd_list,
             output_buffer_.Get(), input_buffer_.Get());
     }
