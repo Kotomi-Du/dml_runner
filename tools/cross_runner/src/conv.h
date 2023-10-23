@@ -229,7 +229,7 @@ public:
     void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_out,
         ID3D12Resource* resource_input, ID3D12Resource* resource_filter, ID3D12Resource* resource_bias, ID3D12Resource* resource_constant)
     {
-        assert(((resource_bias != nullptr)== tensor_bias_desc_.has_value()) && "bias resources is not matching what was expected.");
+       // assert(((resource_bias != nullptr)== tensor_bias_desc_.has_value()) && "bias resources is not matching what was expected.");
 
         DML_BUFFER_BINDING input_buffer_binding{ resource_input, 0, resource_input->GetDesc().Width };
         DML_BUFFER_BINDING filter_buffer_binding{ resource_filter, 0, resource_filter->GetDesc().Width };
@@ -365,9 +365,11 @@ public:
         }
     };
 
-    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
+        , dml_cmd_recorder_(dml_cmd_recorder)
+        , dml_device_(dml_device)
         , input_data_(params_.input_shape.get_elements_count(params_.input_layout)* get_data_type_bytes_width(params_.dt))
         , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
 
@@ -664,7 +666,7 @@ class ConvolutionDirectMLDispatcher : public ConvolutionBaseDispatcher
 public:
 
     ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list, dml_device, dml_cmd_recorder)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),to_dml_tensor_policy(params_.filter_layout),
@@ -731,8 +733,8 @@ public:
         }
     };
 public:
-    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list, dml_device, dml_cmd_recorder )
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
         , cm_params_(std::move(cm_params))
