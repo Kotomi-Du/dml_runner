@@ -368,7 +368,7 @@ public:
     ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
-        , input_data_(params_.input_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
+        , input_data_(params_.input_shape.get_elements_count(params_.input_layout)* get_data_type_bytes_width(params_.dt))
         , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
 
     {
@@ -502,15 +502,61 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        const auto dnnl_untyped_result = get_dnnl_result();
+        std::vector<std::byte> ref_untyped_result{};
+
+        if (false)
+        {
+            ref_untyped_result = get_dnnl_result();
+        }
+        else
+        {
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+                D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            auto ref_output_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+            auto dml_conv_ref = gpu_op::Convolution(params_.input_shape, params_.filter_shape, get_output_shape(),
+                to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout), to_dml_tensor_policy(params_.filter_layout),
+                to_dml_tensor_policy(params_.output_layout),
+                params_.stride, params_.in_pad, params_.out_pad, params_.no_bias, params_.allow_fp16_computations, params_.managed_weights,
+                dml_device_, d3d12_device_, true /*disable mc*/, params_.reuse_cmd);
+
+            // bind descriptor heap
+            auto descriptor_heap = create_descriptor_heap(d3d12_device_, dml_conv_ref.get_total_descriptor_count());
+            ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+            dml_conv_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+            dml_conv_ref.record_initialize(dml_cmd_recorder_, command_list, filter_buffer_.Get(), bias_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+            dml_conv_ref.record_execute(dml_cmd_recorder_, command_list, ref_output_buffer.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+
+
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(ref_output_buffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer.Get(), ref_output_buffer.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            ref_untyped_result.resize(tensor_out_bytes_width);
+            readback_mapped_ptr = nullptr;
+            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+            std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
+            readback_buffer->Unmap(0, nullptr);
+        }
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f);
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.001f);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -577,7 +623,7 @@ protected:
         {
             bindings.bias.data = bias_data_.data();
             bindings.bias.dt = params_.dt;
-            bindings.bias.layout = params_.input_layout;
+            bindings.bias.layout = DataLayout::eW;
             bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
         }
 
@@ -596,6 +642,8 @@ protected:
 
 protected:
     ID3D12Device* d3d12_device_;
+    IDMLDevice* dml_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
     create_params_t params_;
 
     std::vector<std::byte> input_data_;

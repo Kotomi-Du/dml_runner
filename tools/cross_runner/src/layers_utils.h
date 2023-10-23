@@ -16,6 +16,65 @@ inline bool is_power_of_2(std::size_t n)
     return (n & (n - 1)) == 0;
 }
 
+enum class DataLayout
+{
+    eNCHW = 0,
+    eNHWC = 1,
+    eW,
+
+
+    // ..
+    // ..
+
+    // weights layouts
+    eWeightsLayoutStart = 1000,
+    eOIYX,          // nchw and oiyx layouts are the same format, this is just to express it with proper name
+    eIO_i8_o8_i2,  // layout for 1x1 fp16 CM simd8 dpas kernel
+
+    eOYXI_o8,   // layout for non dpas CM kernel for simd8 mad
+    eOYXI_o16,  // layout for non dpas CM kernel for simd16 mad
+
+    // ..
+    // ..
+    eNHWC320,  // used in unpacked adobe case
+
+    eCount
+};
+
+inline std::string data_layout_name(DataLayout l)
+{
+    switch (l)
+    {
+    case DataLayout::eNCHW: return "NCHW";
+    case DataLayout::eNHWC: return "NHWC";
+    case DataLayout::eW:    return "W";
+    case DataLayout::eOIYX: return "OIYX";
+    case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
+    case DataLayout::eOYXI_o8:  return "OYXI_o8";
+    case DataLayout::eOYXI_o16: return "OYXI_o16";
+    default:
+        assert(false && "Unknown data layout name.");
+        return "";
+    }
+    return "";
+
+}
+
+inline std::uint8_t data_layout_dimensions_count(DataLayout l)
+{
+    switch (l)
+    {
+    case DataLayout::eNCHW:
+    case DataLayout::eNHWC:
+        return 4;
+    case DataLayout::eW:
+        return 1;
+    default:
+        return 0;
+    }
+    return 0;
+}
+
 struct TensorShape
 {
     std::uint32_t n = 0;
@@ -52,7 +111,7 @@ struct TensorShape
         assert(current_idx == -1 && "Current idex should be equal -1 (parsed all dimensions).");
     }
 
-    inline std::size_t get_elements_count() const
+    inline std::size_t get_elements_count(DataLayout layout = DataLayout::eCount) const
     {
         if (get_dims_count() == 0)
         {
@@ -60,7 +119,14 @@ struct TensorShape
         }
         std::size_t acc = 1;
         acc *= n ? n : 1;
-        acc *= c ? c : 1;
+        if (layout == DataLayout::eNHWC320)
+        {
+            acc *= align(c, 320);
+        }
+        else
+        {
+            acc *= c ? c : 1;
+        }
         acc *= d ? d : 1;
         acc *= h ? h : 1;
         acc *= w ? w : 1;
@@ -111,64 +177,6 @@ inline std::uint8_t get_data_type_bytes_width(DataType dt)
     case DataType::eFp16: return sizeof(std::uint16_t);
     default:
         assert(false && "Unknown data type.");
-    }
-    return 0;
-}
-
-enum class DataLayout
-{
-    eNCHW = 0,
-    eNHWC = 1,
-    eW,
-
-
-    // ..
-    // ..
-
-    // weights layouts
-    eWeightsLayoutStart = 1000,
-    eOIYX,          // nchw and oiyx layouts are the same format, this is just to express it with proper name
-    eIO_i8_o8_i2,  // layout for 1x1 fp16 CM simd8 dpas kernel
-
-    eOYXI_o8,   // layout for non dpas CM kernel for simd8 mad
-    eOYXI_o16,  // layout for non dpas CM kernel for simd16 mad
-
-    // ..
-    // ..
-
-    eCount
-};
-
-inline std::string data_layout_name(DataLayout l)
-{
-    switch (l)
-    {
-    case DataLayout::eNCHW: return "NCHW";
-    case DataLayout::eNHWC: return "NHWC";
-    case DataLayout::eW:    return "W";
-    case DataLayout::eOIYX: return "OIYX";
-    case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
-    case DataLayout::eOYXI_o8:  return "OYXI_o8";
-    case DataLayout::eOYXI_o16: return "OYXI_o16";
-    default:
-        assert(false && "Unknown data layout name.");
-        return "";
-    }
-    return "";
-
-}
-
-inline std::uint8_t data_layout_dimensions_count(DataLayout l)
-{
-    switch (l)
-    {
-    case DataLayout::eNCHW:
-    case DataLayout::eNHWC:
-        return 4;
-    case DataLayout::eW:
-        return 1;
-    default:
-        return 0;
     }
     return 0;
 }
@@ -256,9 +264,9 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW }))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW, DataLayout::eNHWC320}))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
-            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW },
+            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "nhwc320", DataLayout::eNHWC320 }
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 
