@@ -506,7 +506,7 @@ public:
 
         std::vector<std::byte> ref_untyped_result{};
 
-        if (false)
+        if (true)
         {
             ref_untyped_result = get_dnnl_result();
         }
