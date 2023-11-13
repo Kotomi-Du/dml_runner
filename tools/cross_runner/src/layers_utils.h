@@ -230,9 +230,18 @@ inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real
 {
     using Dt = Half;
     auto* ptr = reinterpret_cast<Dt*>(container.data());
+    //std::cout<< "input_data:"<<container.size() << "\n";
     for (auto i = 0; i < container.size() / sizeof(Dt); i++)
     {
         ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(dist(gen));
+        // if( i % 320 == 0 &&  i < 320*320)
+        // {
+        //     std::cout<<"\n";
+        // }
+        // if( i < 320*320)
+        // {
+        //  std::cout << DirectX::PackedVector::XMConvertHalfToFloat(ptr[i]) << " ";
+        // }
     }
 }
 
