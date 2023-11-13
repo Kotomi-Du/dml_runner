@@ -673,7 +673,7 @@ public:
 
         gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
             params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-             false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
+             true /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
 
         // bind descriptor heap
         auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
@@ -1075,7 +1075,7 @@ public:
             std::string path = "";
             switch (type)
             {
-            case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
+            case GemmType::GemmType_AB: path = "gemm_nchw_dpas.cpp"; break;
             case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
             case GemmType::GemmType_QK_QKV_DPAS: path = "mha_qk_qkv_gemm_dpas.cpp"; break;
             case GemmType::GemmType_SV_S_QKV: path = "mha_sv_s_qkv_gemm_fp16.cpp";  break;

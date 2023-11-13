@@ -277,6 +277,11 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
         ret.node_value = cast_to_float(gpu_typed_result[i]);
         ret.reference_value = cast_to_float(dnnl_typed_result[i]);
 
+        // if(i%200==0)
+        // {
+        //     std::cout<< ret.node_value << ";" << ret.reference_value << std::endl;
+        // }
+
         const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
 
         if (abs_diff > ret.epsilon || std::isnan(ret.node_value) || std::isnan(ret.reference_value))
