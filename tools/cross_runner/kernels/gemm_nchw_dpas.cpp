@@ -60,6 +60,8 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 		const unsigned step_base_offset_a = base_offset_a + step * SIZE_OF_HF16_BYTE;
 		const unsigned step_base_offset_b = base_offset_b + (step / TILE_K) * SIZE_N * TILE_K * SIZE_OF_HF16_BYTE;
 		
+		matrix<HALF, 8, TILE_N> rowX2_0 = 0.0;  
+		matrix<HALF, 8, TILE_N> rowX2_1 = 0.0;
 		#pragma unroll
 		for(int row = 0; row < 8; row++)
 		{
@@ -68,6 +70,12 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 			// Read from inputs surfaces row M x 16K
 			readA1.select<16,1>(vector_offset_a).format<U32>() = cm_load<U32, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, read_offset_a);
 			readA2.select<16,1>(vector_offset_a).format<U32>() = cm_load<U32, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, read_offset_a + SIZE_K * 8 * SIZE_OF_HF16_BYTE);		
+
+			const unsigned rowX2 = row * 2;
+			const unsigned read_offset_b = step_base_offset_b + (rowX2 * SIZE_N)* SIZE_OF_HF16_BYTE;
+			rowX2_0.select<1,1,64,1>(row,0).format<U32>() = cm_load<U32, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b);  
+			rowX2_1.select<1,1,64,1>(row,0).format<U32>() = cm_load<U32, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b + SIZE_N* SIZE_OF_HF16_BYTE);  
+
 		}	
 		
 		for(int n = 0; n < TILE_N/8; n++)  
@@ -75,15 +83,8 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 			#pragma unroll
 			for (int row = 0; row < 8; row++)
 			{
-				const unsigned rowX2 = row * 2;
-				const unsigned read_offset_b = step_base_offset_b + (rowX2 * SIZE_N)* SIZE_OF_HF16_BYTE;
-
-				vector<uint32_t, 32> rowX2_0_packed =  cm_load<U32, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b);  
-				vector<uint32_t, 32> rowX2_1_packed =  cm_load<U32, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b,  read_offset_b + SIZE_N* SIZE_OF_HF16_BYTE); 
-				vector_ref<half, 64> rowX2_0 = rowX2_0_packed.format<half>();  
-				vector_ref<half, 64> rowX2_1 = rowX2_1_packed.format<half>();
-				readB_m.select<1,1,8,2>(row, 0)= rowX2_0.select<8,1>(8*n);
-				readB_m.select<1,1,8,2>(row, 1)= rowX2_1.select<8,1>(8*n);
+				readB_m.select<1,1,8,2>(row, 0)= rowX2_0.select<1,1,8,1>(row,8*n);
+				readB_m.select<1,1,8,2>(row, 1)= rowX2_1.select<1,1,8,1>(row,8*n);
 			}
 			
 			myDPAS8(readA1_m, readB_m, result1ref.select<8,1,8,1>(0,n*8));  
