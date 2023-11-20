@@ -73,8 +73,8 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 
 			const unsigned rowX2 = row * 2;
 			const unsigned read_offset_b = step_base_offset_b + (rowX2 * SIZE_N)* SIZE_OF_HF16_BYTE;
-			rowX2_0.select<1,1,64,1>(row,0).format<U32>() = cm_load<U32, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b);  
-			rowX2_1.select<1,1,64,1>(row,0).format<U32>() = cm_load<U32, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b + SIZE_N* SIZE_OF_HF16_BYTE);  
+			rowX2_0.select<1,1,TILE_N,1>(row,0).format<U32>() = cm_load<U32, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b);  
+			rowX2_1.select<1,1,TILE_N,1>(row,0).format<U32>() = cm_load<U32, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b + SIZE_N* SIZE_OF_HF16_BYTE);  
 
 		}	
 		
@@ -118,9 +118,9 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 		// }
 
 	}
-	vector<HALF, 64> result_hf16_CL1 = 0.0;
+	vector<HALF, TILE_N> result_hf16_CL1 = 0.0;
 	result1 *= HALF(ALPHA);
-	vector<HALF, 64> result_hf16_CL2 = 0.0;
+	vector<HALF, TILE_N> result_hf16_CL2 = 0.0;
 	result2 *= HALF(ALPHA);
 	
 	#pragma unroll
@@ -128,12 +128,12 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 	{
 		const unsigned write_index = base_offset_output + i * SIZE_N * SIZE_OF_HF16_BYTE;
 		
-		result_hf16_CL1.select<64, 1>(0)  = result1ref.select<1, 1, 64, 1>(i, 0);
-		result_hf16_CL2.select<64, 1>(0)  = result2ref.select<1, 1, 64, 1>(i, 0);
+		result_hf16_CL1.select<TILE_N, 1>(0)  = result1ref.select<1, 1, TILE_N, 1>(i, 0);
+		result_hf16_CL2.select<TILE_N, 1>(0)  = result2ref.select<1, 1, TILE_N, 1>(i, 0);
 
 		
-		cm_store<U32, 32, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, write_index, result_hf16_CL1.format<U32>());
-		cm_store<U32, 32, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, write_index + 8*SIZE_N*SIZE_OF_HF16_BYTE, result_hf16_CL2.format<U32>());
+		cm_store<U32, TILE_N/2, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, write_index, result_hf16_CL1.format<U32>());
+		cm_store<U32, TILE_N/2, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, write_index + 8*SIZE_N*SIZE_OF_HF16_BYTE, result_hf16_CL2.format<U32>());
 	}
 
 #endif // !defined(EMPTY)
