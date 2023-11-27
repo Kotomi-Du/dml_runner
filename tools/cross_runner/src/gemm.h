@@ -874,6 +874,7 @@ public:
         std::uint32_t tile_n = 0;
 
         std::uint32_t slice_k = 1;
+        bool reorder_weights = true;
 
         inline static void add_cli_options(CLI::App* opts, cm_params_t& params)
         {
@@ -891,6 +892,7 @@ public:
             opts->add_option("--lws_z", params.lws[2]);
 
             opts->add_option("--slice_k", params.slice_k);
+            opts->add_flag("--reorder_weights,!--no_reorder_weights", params.reorder_weights);
 
         }
     };
@@ -909,6 +911,23 @@ public:
         const auto M = get_M();
         const auto K = get_K();
         const auto N = get_N();
+
+        // weights reoder
+        if(cm_params_.reorder_weights && params_.type == GemmType::GemmType_AB)
+        {
+            WeightsReorder::create_params_t wr_params{};
+            wr_params.input_dt = params_.dt;
+            wr_params.output_dt = params_.dt;
+            wr_params.size_k = K;
+            wr_params.size_n = N;
+            wr_params.tile_k = cm_params_.tile_k;
+            wr_params.tile_n = cm_params_.tile_n;
+            wr_params.gemm_type = params_.type;
+            wr_params.b_transposed = params_.b_transposed;
+
+            weights_reorder_.emplace(WeightsReorder(std::move(wr_params), input_buffer_b_, intc_ext, d3d12_device, cmd_list));
+        }
+
 
         if (params_.type == GemmType::GemmType_SV_S_QKV)
         {
@@ -1126,22 +1145,47 @@ public:
     {
         // input_a, input_b, output
         std::uint32_t descriptor_count = 3;
+        
+        if (weights_reorder_.has_value())
+        {
+            descriptor_count += weights_reorder_->get_total_descriptor_count();
+        }
         return descriptor_count;
     }
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
+         const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        // i.e. add weights reorder
+        auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+        auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+        if (weights_reorder_.has_value())
+        {
+            weights_reorder_->initialize(cmd_list, cpu_handle, gpu_handle);
+            base_cpu_handle.Offset(weights_reorder_->get_total_descriptor_count(), desc_heap_incrs_size);
+            base_gpu_handle.Offset(weights_reorder_->get_total_descriptor_count(), desc_heap_incrs_size);
+        }
 
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
         if (input_buffer_b_)
         {
-            resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
+            resources_list.push_back({ DescType::eSrv, weights_reorder_.has_value() ? weights_reorder_->get_output_resource() : input_buffer_b_.Get() });
         }
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
         gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
+        assert(!gpu_handles_.empty());
+
+          // dispatch weights reorder here in initalized if weights are managed
+        if (params_.b_managed && weights_reorder_.has_value())
+        {
+            weights_reorder_->execute(cmd_list);
+
+            auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(weights_reorder_->get_output_resource());
+            cmd_list->ResourceBarrier(1, &barrier);
+        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list)
@@ -1171,6 +1215,19 @@ public:
         const auto thg_z = gws_z / cm_params_.lws[2];
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
     }
+
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+    {
+        if (weights_reorder_.has_value())
+        {
+            weights_reorder_->validate_conformance(command_queue, command_allocator, command_list);
+        }
+        //const auto ret = GemmBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
+        //return ret;
+        return ConformanceResult{};
+    }
+
 
     private:
         std::vector<std::uint32_t> get_gws() const
@@ -1202,7 +1259,9 @@ public:
             }
             else
             {
-                gws_x = get_M() / cm_params_.tile_m;
+                
+                //gws_x = get_M() / cm_params_.tile_m;
+                gws_x = align(get_M(), cm_params_.tile_m) / cm_params_.tile_m;
                 gws_y = get_N() / cm_params_.tile_n;
                 gws_z = get_batch() * get_channels() * cm_params_.slice_k;
             }
@@ -1211,6 +1270,232 @@ public:
             assert(gws_z != 0);
             return { gws_x, gws_y, gws_z };
         }
+    private:
+        class WeightsReorder : public NodeDispatcher
+        {
+        public:
+            struct create_params_t
+            {
+                DataType input_dt = DataType::eCount;
+                DataType output_dt = DataType::eCount;
+
+                std::uint32_t size_k = 0;
+                std::uint32_t size_n = 0;
+                std::uint32_t tile_k = 0;
+                std::uint32_t tile_n = 0;
+                bool b_transposed = 0;
+                GemmType gemm_type;
+
+
+                std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
+
+                std::array<std::uint32_t, 3> get_gws() const
+                {
+                    std::uint32_t gws_x = 0;
+                    std::uint32_t gws_y = 0;
+                    std::uint32_t gws_z = 0;
+                    if (gemm_type == GemmType::GemmType_AB)
+                    {
+                        gws_x = align(size_k, tile_k) / tile_k;
+                        gws_y = size_n / tile_n;
+                        gws_z = 1;
+                    }
+                    return { gws_x, gws_y, gws_z };
+                }
+            };
+        public:
+            WeightsReorder(create_params_t&& params, ComPtr<ID3D12Resource> input_resource, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+                : params_(std::move(params))
+                , intc_ext_(intc_ext)
+                , d3d12_device_(d3d12_device)
+                , input_buffer_(input_resource)
+            {
+                // root signature
+                {
+                    // input
+                    const std::vector<DescType> desc_list = { DescType::eSrv,DescType::eUav};
+                    root_signature_ = create_root_signature(d3d12_device_, desc_list);
+                    assert(root_signature_);
+                }
+
+
+                // kernel jits
+                std::string build_options = "";
+                const std::string pre_jit = "-D";
+                const std::string post_jit = " ";
+                const std::string between_name_and_value = "=";
+
+                auto add_define = [&](const std::string& name, auto value) {
+                    using namespace std;
+                    std::string value_str;
+                    if (std::is_floating_point<decltype(value)>::value)
+                    {// to_*string precision is not enough to ensure good match betweeen GPU and CPU or pytorch execution results:
+                        value_str = (std::stringstream() << std::setiosflags(std::ios_base::showpoint | std::ios_base::fixed) << std::setprecision((std::numeric_limits<decltype(value)>::max_digits10 + 1)) << value).str();
+                    }
+                    else
+                    { // fine for other types:
+                        value_str = to_string(value);
+                    }
+
+                    build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
+                    };
+                if (params_.input_dt == DataType::eFp16 && params_.output_dt == DataType::eFp16)
+                {
+                    add_define("DT", "half");
+                }
+                else
+                {
+                    add_define("DT", "float");
+                }
+
+                add_define("TILE_K", params_.tile_k);
+                add_define("TILE_N", params_.tile_n);
+                add_define("SIZE_K", params_.size_k);
+                add_define("SIZE_N", params_.size_n);
+
+                /*for (std::int32_t i = static_cast<std::int32_t>(DataLayout::eWeightsLayoutStart) + 1; i < static_cast<std::int32_t>(DataLayout::eCount); i++)
+                {
+                    add_define("LAYOUT_" + data_layout_name(static_cast<DataLayout>(i)), i);
+                }*/
+                add_define("INPUT_TRANSPOSED", params_.b_transposed);
+
+
+                auto kernel_source_content = []()
+                    {
+                        const auto path = "reorder_gemm_b.cpp";
+                        std::fstream file(path);
+                        if (!file.is_open())
+                        {
+                            const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
+                            throw std::runtime_error(msg);
+                        }
+                        return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
+                    }();
+
+                    // kernel compilation
+                    const auto dump_asm_str = " -mdump_asm";
+                    const auto print_reg_str = " -mCM_printregusage";
+
+                    const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(params_.lws[0]);
+                    const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(params_.lws[1]);
+                    const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(params_.lws[2]);
+                    const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + print_reg_str + lws_x + lws_y + lws_z;
+
+                    CD3DX12_SHADER_BYTECODE byte_code;
+                    byte_code.pShaderBytecode = kernel_source_content.data();
+                    byte_code.BytecodeLength = kernel_source_content.size();
+
+                    //if (cm_params_.dump_asm)
+                    {
+                        std::cout << build_options_final << std::endl;
+                    }
+
+                    pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
+                    assert(pso_);
+
+
+                    // compiled success -> create buffer
+                    {
+                        const auto size_bytes = params_.size_k * params_.size_n * get_data_type_bytes_width(params_.output_dt);
+                        output_buffer_ = create_buffer(d3d12_device, size_bytes,
+                            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+                    }
+            }
+
+            ID3D12Resource* get_output_resource()
+            {
+                return output_buffer_.Get();
+            }
+
+            void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+            {
+                assert(input_buffer_);
+                assert(output_buffer_);
+                const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                // i.e. add weights reorder
+
+                auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+                auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+                std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+                resources_list.reserve(get_total_descriptor_count());
+                resources_list.push_back({ DescType::eSrv, input_buffer_.Get() });
+                resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+
+                gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
+            }
+
+            std::uint32_t get_total_descriptor_count() override
+            {
+                return 2;
+            }
+
+            void execute(ID3D12GraphicsCommandList* cmd_list) override
+            {
+                assert(cmd_list);
+                assert(pso_);
+                assert(root_signature_);
+                assert(!gpu_handles_.empty());
+
+                const auto gws_xyz = params_.get_gws();
+                const auto gws_x = gws_xyz.at(0);
+                const auto gws_y = gws_xyz.at(1);
+                const auto gws_z = gws_xyz.at(2);
+
+                assert(gws_x % params_.lws[0] == 0);
+                assert(gws_x % params_.lws[1] == 0);
+                assert(gws_x % params_.lws[2] == 0);
+
+                const auto thg_x = gws_x / params_.lws[0];
+                const auto thg_y = gws_y / params_.lws[1];
+                const auto thg_z = gws_z / params_.lws[2];
+
+
+                //std::cout << std::format("thg: {}, {}, {} \n", thg_x, thg_y, thg_z);
+                dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
+            }
+
+
+            ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+                ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+            {
+                const auto tensor_out_bytes_width = input_buffer_->GetDesc().Width;
+                std::cout<< "\n size:"<<tensor_out_bytes_width << "\n";
+                // readback data and validate
+                auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+                auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_.Get(),
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                command_list->ResourceBarrier(1, &readback_output_barrirer);
+                command_list->CopyResource(readback_buffer.Get(), input_buffer_.Get());
+                close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+                std::vector<std::byte> data_out(tensor_out_bytes_width);
+                std::byte* readback_mapped_ptr = nullptr;
+                readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+                std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+                readback_buffer->Unmap(0, nullptr);
+
+                const Half* data_ptr = reinterpret_cast<const Half*>(data_out.data());
+                for (std::int32_t i = 0; i < tensor_out_bytes_width / get_data_type_bytes_width(params_.output_dt); i++)
+                {
+                   std::cout << DirectX::PackedVector::XMConvertHalfToFloat(data_ptr[i]) << " ";
+                }
+             
+
+                return ConformanceResult{};
+            }
+
+        private:
+            create_params_t params_;
+            IntelExtension& intc_ext_;
+            ID3D12Device* d3d12_device_;
+            ComPtr<ID3D12Resource> input_buffer_;
+            ComPtr<ID3D12Resource> output_buffer_;
+            ComPtr<ID3D12PipelineState> pso_;
+            ComPtr<ID3D12RootSignature> root_signature_;
+            std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
+        };
+
 
 private:
     cm_params_t cm_params_;
@@ -1219,4 +1504,6 @@ private:
 
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_signature_;
+
+    std::optional<WeightsReorder> weights_reorder_;
 };
