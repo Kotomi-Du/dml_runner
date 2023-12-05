@@ -1193,13 +1193,6 @@ public:
         cmd_list->SetComputeRootSignature(root_signature_.Get());
         cmd_list->SetPipelineState(pso_.Get());
 
-        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
-        {
-            const auto gpu_heap_handle = gpu_handles_[i];
-            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
-        }
-
         const auto gws = get_gws();
 
         const auto gws_x = gws[0];
@@ -1213,7 +1206,8 @@ public:
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
-        cmd_list->Dispatch(thg_x, thg_y, thg_z);
+        //cmd_list->Dispatch(thg_x, thg_y, thg_z);
+         dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,

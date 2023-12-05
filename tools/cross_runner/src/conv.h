@@ -264,7 +264,7 @@ public:
         TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
-        bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
+        bool managaed_weights = true; // ToDo: pass it to DML class so its actually beigned used
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -793,6 +793,7 @@ public:
         // dispatch weights reorder here in initalized if weights are managed
         if (params_.managaed_weights && weights_reorder_.has_value())
         {
+            std::cout<< "reorder";
             weights_reorder_->execute(cmd_list);
 
             auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(weights_reorder_->get_output_resource());
