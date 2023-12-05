@@ -874,7 +874,7 @@ public:
         std::uint32_t tile_n = 0;
 
         std::uint32_t slice_k = 1;
-        bool reorder_weights = true;
+        bool reorder_weights = false;
 
         inline static void add_cli_options(CLI::App* opts, cm_params_t& params)
         {

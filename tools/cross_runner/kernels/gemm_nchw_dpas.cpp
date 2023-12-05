@@ -55,8 +55,8 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 	vector<HALF, SIZE_PER_DPAS_HF16 * (TILE_N / 8) *(TILE_K/16)> readB = 0.0; 	// N=0..7,  K=0..15		//B tile: 16Kx8N
 	matrix_ref<HALF, TILE_K/2, TILE_N*2> readB_m = readB.format<HALF, TILE_K/2, TILE_N*2>();	
 #else
-	vector<HALF, SIZE_PER_DPAS_HF16> readB = 0.0; 	// N=0..7,  K=0..15		//B tile: 16Kx8N
-	matrix_ref<HALF, 8, 16> readB_m = readB.format<HALF, 8, 16>();
+	vector<HALF, TILE_K * TILE_N> readB = 0.0; 	// N=0..7,  K=0..15		//B tile: 16Kx8N
+	matrix_ref<HALF, TILE_K/2, 2*TILE_N> readB_m = readB.format<HALF, TILE_K/2, 2*TILE_N>();
 #endif
 
 	
@@ -93,21 +93,14 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 			readB_m.select<1,1,TILE_N,2>(row, 1).format<U32>()= cm_load_slm<uint32_t, TILE_N/2>(slm_read_base_offset + TILE_N * SIZE_OF_HF16_BYTE);
 		}
 #else
-
-		matrix<HALF, TILE_K/2, TILE_N> rowX2_0 = 0.0;  
-		matrix<HALF, TILE_K/2, TILE_N> rowX2_1 = 0.0;
-
 		//cache elements in matrix B 
 		#pragma unroll
 		for(int row = 0; row < TILE_K/2; row++)
 		{
-			const uint32_t rowX2 = row * 2;
-			const uint32_t read_offset_b = step_base_offset_b + (rowX2 * SIZE_N)* SIZE_OF_HF16_BYTE;
-			rowX2_0.select<1,1,TILE_N,1>(row,0).format<U32>() = cm_load<U32, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b);  
-			rowX2_1.select<1,1,TILE_N,1>(row,0).format<U32>() = cm_load<U32, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b + SIZE_N* SIZE_OF_HF16_BYTE);  
+			const uint32_t read_offset_b = step_base_offset_b + (row  * SIZE_N)* SIZE_OF_HF16_BYTE;
+			readB_m.select<1, 1 , 2*TILE_N, 1>(row, 0).format<U32>() = cm_load<U32, TILE_N, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, read_offset_b);  
 		}		
 #endif
-
 
 		#pragma unroll
 		for(int m=0; m < TILE_M/8; m++)
@@ -122,8 +115,6 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 			}	
 			
 			//calcute DPAS
-			
- 
 			#pragma unroll	
 			for(int n = 0; n < TILE_N/8; n++)  
 			{
@@ -133,13 +124,9 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
 					#if SLM_KN_SHARING
 						myDPAS8(readA_m.select<8,1,16,1>(m * 8, k*16), readB_m.select<8,1,16,1>(k*8, n*16),result1ref.select<8,1,8,1>(m * 8,n * 8));
 					#else
-						#pragma unroll
-						for (int row = 0; row < 8; row++)
-						{		
-							readB_m.select<1,1,8,2>(row, 0)= rowX2_0.select<1,1,8,1>(row + k*8, 8*n);
-							readB_m.select<1,1,8,2>(row, 1)= rowX2_1.select<1,1,8,1>(row + k*8, 8*n);	
-						}	
-						myDPAS8(readA_m.select<8,1,16,1>(m * 8, k*16),  readB_m, result1ref.select<8,1,8,1>(m * 8,n * 8));  
+						myDPAS8(readA_m.select<8,1,16,1>(m * 8, k*16),  readB_m.select<8,1,16,1>(k*8, n*16), result1ref.select<8,1,8,1>(m * 8,n * 8)); 
+						// matrix_ref<HALF, 8,16> temp = readA.select<8*16,1>(m * 8 * 16).format<HALF, 8, 16>();
+						// myDPAS8(temp , readB_m.select<8,1,16,1>(k*8, n*16), result1ref.select<8,1,8,1>(m * 8,n * 8));  
 					#endif
 				}
 			}
@@ -158,15 +145,28 @@ extern "C" _GENX_MAIN_ void gemm_nchw_dpas(
     	// 	}
 		// }
 		
-		// if (thread_id_0 == 11 && thread_id_1 == 0)
+		// if (thread_id_0 == 0 && thread_id_1 == 0)
 		// {
-		// 	for (int i = 0; i < 16; i++)
+		// 	for (int i = 0; i < TILE_K/2; i++)
+    	// 	{
+        // 		  printf(" row%d", i);
+       	// 		 for (int j = 0; j < 2*TILE_N;j++)
+        // 		{ 
+		// 			printf(" %f",readB(i * TILE_N * 2+j));
+        // 		}
+        // 		printf("\n");\
+    	// 	}
+		// }
+
+		// if (thread_id_0 == 0 && thread_id_1 == 0)
+		// {
+		// 	for (int i = 0; i < TILE_M; i++)
     	// 	{
         // 		  printf(" row%d", i);
        	// 		 for (int j = 0; j < TILE_K;j++)
         // 		{ 
         // 		    printf(" %f",readA(i *TILE_K+j));
-		// 			// printf(" %f",readB(i *16+j));
+		// 			//printf(" %f",readB(i * TILE_N * 2+j));
         // 		}
         // 		printf("\n");\
     	// 	}
