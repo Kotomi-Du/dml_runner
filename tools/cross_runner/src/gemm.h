@@ -1081,7 +1081,7 @@ public:
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = [](GemmType type, bool dpas_flag)
+        auto kernel_source_content = [](GemmType type, bool dpas_flag, bool b_transposed)
         {
             std::string path = "";
             switch (type)
@@ -1090,7 +1090,14 @@ public:
             {
                 if(dpas_flag == true)
                 {
-                    path = "gemm_nchw_dpas.cpp";
+                    if(b_transposed)
+                    {
+                        path = "gemm_nchw_dpas_btranspose.cpp";
+                    }
+                    else
+                    {
+                        path = "gemm_nchw_dpas.cpp";
+                    } 
                 }else{
                     path = "gemm_nchw_fp16.cpp";
                 }       
@@ -1120,7 +1127,7 @@ public:
                 throw std::runtime_error(msg);
             }
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-        }(params_.type,params_.use_dpas);
+        }(params_.type,params_.use_dpas, params_.b_transposed);
 
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
@@ -1217,8 +1224,20 @@ public:
             }
             else
             {
-                gws_x = get_M() / cm_params_.tile_m;
-                gws_y = get_N() / cm_params_.tile_n;
+                if(params_.b_transposed)
+                {
+                    gws_y = align(get_M(), cm_params_.tile_m) / cm_params_.tile_m;
+                    gws_x = align(get_N(), cm_params_.tile_n) / cm_params_.tile_n;
+                }
+                else
+                {
+                    gws_x = align(get_M(), cm_params_.tile_m) / cm_params_.tile_m;
+                    gws_y = align(get_N(), cm_params_.tile_n) / cm_params_.tile_n;
+                    //gws_x = get_M() / cm_params_.tile_m;
+                    //gws_y = get_N() / cm_params_.tile_n;
+
+                }
+           
                 gws_z = get_batch() * get_channels() * cm_params_.slice_k;
             }
             assert(gws_x != 0);
