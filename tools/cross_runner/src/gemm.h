@@ -82,7 +82,7 @@ class Gemm : public DirectMlBaseNode
 public:
     Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
-        bool b_managed, bool b_transposed, float alpha, float beta,
+        bool b_managed, bool b_transposed, bool c_managed, float alpha, float beta,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
         , type_(gemm_type)
@@ -114,7 +114,7 @@ public:
                 dimensions_2.push_back(shape_a.c);
                 dimensions_2.push_back(shape_a.h);
                 dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
-                dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
+                dml::TensorDesc desc_input_2 = { data_type, c_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_2 };
                 input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }
 
@@ -450,6 +450,7 @@ public:
         bool fuse_softmax = false;
         bool b_managed = false;
         bool b_transposed = false;
+        bool c_managed = false;
 
         bool use_dpas = false;
 
@@ -465,6 +466,7 @@ public:
 
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);
+            opts->add_flag("--c_managed", params.c_managed)->default_val(false);
 
             opts->add_option("--alpha", params.alpha);
             opts->add_option("--beta", params.beta);
@@ -674,7 +676,7 @@ public:
 
         gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
             params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-             true /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
+             true /*params_.b_managed*/, params_.b_transposed, true /*params_.c_managed*/, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
 
         // bind descriptor heap
         auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
@@ -828,7 +830,7 @@ class GemmDmlDispatcher : public GemmBaseDispatcher
 public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
-        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), params_.b_managed, params_.b_transposed,
+        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), params_.b_managed, params_.b_transposed, params_.c_managed,
             params_.alpha, params_.beta,
             dml_device, d3d12_device, false)
     {
@@ -992,6 +994,7 @@ public:
             {
                 DescType::eSrv, // input a
                 DescType::eSrv, // input b
+                DescType::eSrv, // input c
                 DescType::eUav // output
             };
             root_signature_ = create_root_signature(d3d12_device, desc_list);
@@ -1045,6 +1048,14 @@ public:
 
         add_define("ALPHA", params_.alpha);
         add_define("BETA", params_.beta);
+        if(params_.beta != 0)
+        {
+            add_define("USE_INPUTC", 1);  
+        }
+        else
+        {
+            add_define("USE_INPUTC", 0);
+        }
 
         add_define("DT", "half");
 
@@ -1124,8 +1135,8 @@ public:
 
     std::uint32_t get_total_descriptor_count() override
     {
-        // input_a, input_b, output
-        std::uint32_t descriptor_count = 3;
+        // input_a, input_b, input_c, output
+        std::uint32_t descriptor_count = 4;
         return descriptor_count;
     }
 
@@ -1138,6 +1149,10 @@ public:
         if (input_buffer_b_)
         {
             resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
+        }
+        if (input_buffer_c_)
+        {
+            resources_list.push_back({ DescType::eSrv, input_buffer_c_.Get() });
         }
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
