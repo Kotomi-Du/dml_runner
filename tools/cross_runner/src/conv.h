@@ -680,6 +680,7 @@ public:
         std::uint32_t slice_ic = 1;
         bool reorder_weights = true;
         bool dispatch_only_weights_reorder = false;
+        bool use_dpas = false;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
         {
@@ -693,6 +694,7 @@ public:
             opts->add_option("--lws", params.lws)->delimiter(',');
             opts->add_flag("--reorder_weights,!--no_reorder_weights", params.reorder_weights);
             opts->add_flag("--dispatch_only_weights_reorder", params.dispatch_only_weights_reorder);
+            opts-> add_flag("--use_dpas", params.use_dpas)->default_val(false);
         }
     };
 public:
@@ -715,6 +717,7 @@ public:
             wr_params.oc = params_.filter_shape.n;
             wr_params.k_size = params_.filter_shape.w;
             wr_params.input_layout = params_.filter_layout == DataLayout::eNCHW ? DataLayout::eOIYX : DataLayout::eWeightsLayoutStart;
+            wr_params.use_dpas = cm_params_.use_dpas;
 
             if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
             {
@@ -816,12 +819,19 @@ public:
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = [](const auto kernel_size)
+        auto kernel_source_content = [](const auto kernel_size, bool dpas_flag)
         {
             std::string path = "";
             if (kernel_size == 1)
             {
-                path = "conv_1x1_nchw_fp16.cpp";
+                if(dpas_flag == true)
+                {
+                  path = "conv_1x1_nchw_dpas.cpp";
+                }
+                else
+                {
+                  path = "conv_1x1_nchw_fp16.cpp";  
+                }
             }
             else
             {
@@ -836,7 +846,7 @@ public:
             }
             std::cout << std::format("Read kernel file: {} \n", path);
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-        }(params_.filter_shape.w);
+        }(params_.filter_shape.w, cm_params_.use_dpas);
 
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
@@ -928,7 +938,7 @@ public:
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
 
-        //std::cout << std::format("gws: {}, {}, {}, thg: {}, {}, {}\n", gws_x, gws_y, gws_z, thg_x, thg_y, thg_z);
+        //std::cout << std::format("conv kernel gws: {}, {}, {}, thg: {}, {}, {}\n", gws_x, gws_y, gws_z, thg_x, thg_y, thg_z);
 
         dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
     }
@@ -959,6 +969,7 @@ private:
             std::uint32_t ic = 0;
             std::uint32_t oc = 0;
             std::uint32_t k_size = 0;
+            bool use_dpas = false;
 
             std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
@@ -971,10 +982,12 @@ private:
                 {
                     const std::uint32_t ic_chunks_per_hw_thread = 8;
                     const std::uint32_t exec_size = 8;
-                    const std::uint32_t dpas_depth = 8;
+                    const std::uint32_t dpas_depth = 4; //8
                     const std::uint32_t out_dt_size = get_data_type_bytes_width(output_dt);
                     gws_x = oc / exec_size;
                     gws_y = ic / (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
+                   // const std::uint32_t ic_multipler = (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
+                    //gws_y = (ic % ic_multipler == 0) ? ic / ic_multipler : (ic / ic_multipler) + 1;
                     gws_z = 1;
                 }
                 else if (output_layout == DataLayout::eOYXI_o8)
@@ -993,6 +1006,7 @@ private:
                 {
                     assert(false && "Unknown data layout for weights reorder CM kernel.");
                 }
+               
                 return { gws_x, gws_y, gws_z };
             }
         };
@@ -1052,9 +1066,17 @@ private:
             add_define("INPUT_LAYOUT", static_cast<std::int32_t>(params_.input_layout));
             add_define("OUTPUT_LAYOUT", static_cast<std::int32_t>(params_.output_layout));
 
-            auto kernel_source_content = []()
+            auto kernel_source_content = [](bool dpas_flag)
             {
-                const auto path = "reorder_weights.cpp";
+                auto path = "";
+                  if(dpas_flag == true)
+                {
+                    path = "reorder_weights_conv_dpas.cpp";
+                }
+                else
+                {
+                    path = "reorder_weights.cpp";
+                }
                 std::fstream file(path);
                 if (!file.is_open())
                 {
@@ -1062,7 +1084,7 @@ private:
                     throw std::runtime_error(msg);
                 }
                 return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-            }();
+            }(params_.use_dpas);
 
             // kernel compilation
             const auto dump_asm_str = " -mdump_asm";
@@ -1141,7 +1163,7 @@ private:
             const auto thg_x = gws_x / params_.lws[0];
             const auto thg_y = gws_y / params_.lws[1];
             const auto thg_z = gws_z / params_.lws[2];
-            //std::cout << std::format("thg: {}, {}, {} \n", thg_x, thg_y, thg_z);
+            //std::cout << std::format("reorder kernel gws: {}, {}, {}, thg: {}, {}, {}\n", gws_x, gws_y, gws_z, thg_x, thg_y, thg_z);
             dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
         }
 

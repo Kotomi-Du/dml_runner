@@ -243,13 +243,29 @@ inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_rea
     }
 }
 
-inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::byte> container)
+inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::byte> container, bool print_flag=FALSE)
 {
     using Dt = Half;
     auto* ptr = reinterpret_cast<Dt*>(container.data());
     for (auto i = 0; i < container.size() / sizeof(Dt); i++)
     {
         ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(dist(gen));
+    }
+    if (print_flag)
+    {
+        std::cout << "\ninput_data size:" << container.size() / sizeof(Dt) << "\n";
+        for (auto i = 0; i < container.size() / sizeof(Dt); i++)
+        {
+            if (i % 320 == 0 && i < 320 * 320)
+            {
+                std::cout << "\n";
+            }
+            if (i < 320 * 320)
+            {
+                printf("%8.3f ", DirectX::PackedVector::XMConvertHalfToFloat(ptr[i]));
+            }
+        }
+        std::cout << "\n";
     }
 }
 
