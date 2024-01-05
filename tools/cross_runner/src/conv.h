@@ -13,7 +13,7 @@ public:
         const TensorShape& filter_shape, const dml::TensorPolicy& filter_tensor_policy,
         const DML_TENSOR_DATA_TYPE data_type,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
-            bool use_bias, bool allow_fp16_computations, ActivationType activation, bool allow_weights_to_be_managed, bool allow_reuse_commandlist,
+            bool use_bias, bool allow_fp16_computations, ActivationType activation, float activation_alpha, bool allow_weights_to_be_managed, bool allow_reuse_commandlist,
             IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
@@ -118,12 +118,21 @@ public:
         
         DML_OPERATOR_DESC activation_desc{};
         DML_ACTIVATION_RELU_OPERATOR_DESC relu_op{};
+        DML_ACTIVATION_LEAKY_RELU_OPERATOR_DESC leakyrelu_op{};
         if (activation == ActivationType::eRelu)
         {
             relu_op.InputTensor = nullptr;
             relu_op.OutputTensor = nullptr;
             activation_desc.Type = DML_OPERATOR_ACTIVATION_RELU;
             activation_desc.Desc = &relu_op;
+        }
+        if (activation == ActivationType::eLeakyRelu)
+        {
+            leakyrelu_op.InputTensor = nullptr;
+            leakyrelu_op.OutputTensor = nullptr;
+            leakyrelu_op.Alpha = activation_alpha;
+            activation_desc.Type = DML_OPERATOR_ACTIVATION_LEAKY_RELU;
+            activation_desc.Desc = &leakyrelu_op;
         }
         else
         {
@@ -348,6 +357,7 @@ public:
         bool allow_fp16_computations = false;
         bool managed_weights = true;
         bool reuse_cmd = true;
+        float activation_alpha = 1.0f;
 
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
@@ -356,6 +366,7 @@ public:
             add_data_layout_cli_option(opts, "--input_layout", params.input_layout)->required();
             add_data_layout_cli_option(opts, "--output_layout", params.output_layout)->required();
             add_activation_type_cli_option(opts, "--activation", params.activation)->default_val(ActivationType::eNone);
+            opts->add_option("--activation_alpha", params.activation_alpha);
             opts->add_option("--input_shape", params.input_shape, "speciify list: <n, ic, h, w")->required();
             opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
@@ -512,7 +523,7 @@ public:
             auto dml_conv_ref = gpu_op::Convolution(params_.input_shape, to_dml_tensor_policy(params_.input_layout),
                 get_output_shape(), to_dml_tensor_policy(params_.output_layout),
                 params_.filter_shape, to_dml_tensor_policy(params_.filter_layout),
-                to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, false/*params_.managed_weights*/,false /*params_.reuse_cmd*/,
+                to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, params_.activation_alpha, false/*params_.managed_weights*/,false /*params_.reuse_cmd*/,
                 dml_device_, d3d12_device_, true/*disable_mc*/);
 
             // bind descriptor heap
@@ -634,7 +645,7 @@ public:
         , conv_(params_.input_shape, to_dml_tensor_policy(params_.input_layout),
             get_output_shape(), to_dml_tensor_policy(params_.output_layout),
             params_.filter_shape, to_dml_tensor_policy(params_.filter_layout),
-            to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, params_.managed_weights, params_.reuse_cmd,
+            to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, params_.activation_alpha, params_.managed_weights, params_.reuse_cmd,
             dml_device, d3d12_device)
     {
     }
@@ -781,6 +792,20 @@ public:
         {
             add_define("DT_ACCU", "float");
         }
+
+        switch(params_.activation) 
+        {
+            case ActivationType::eRelu: 
+                add_define("ACTIVATION_FUNCTION_RELU",1); 
+                break;
+            case ActivationType::eLeakyRelu:
+                add_define("ACTIVATION_FUNCTION_LEAKY_RELU",1); 
+                add_define("ACTIVATION_ALPHA", params_.activation_alpha);
+                break;
+            default:
+                break;
+        }
+        
         add_define("INPUT_WIDTH", params_.input_shape.w);
         add_define("INPUT_HEIGHT", params_.input_shape.h);
         add_define("INPUT_CHANNELS", params_.input_shape.c);

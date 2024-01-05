@@ -194,6 +194,7 @@ enum class ActivationType
 {
     eNone = 0,
     eRelu = 1,
+    eLeakyRelu = 2,
     
     //...
 };
@@ -298,11 +299,12 @@ inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name
 inline auto add_activation_type_cli_option(CLI::App* opts, std::string_view opt_name, ActivationType& activation)
 {
     return opts->add_option(opt_name.data(), activation)->check(CLI::IsMember({ 
-        ActivationType::eNone, ActivationType::eRelu }))
+        ActivationType::eNone, ActivationType::eRelu, ActivationType::eLeakyRelu }))
         ->transform(CLI::Transformer(std::map<std::string, ActivationType>
     {
             { "none", ActivationType::eNone},
-            { "relu", ActivationType::eRelu } 
+            { "relu", ActivationType::eRelu },
+            { "leakyrelu", ActivationType::eLeakyRelu }
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 

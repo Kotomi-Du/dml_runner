@@ -8,8 +8,7 @@
 
 
 * `cross_runner.exe --type=conv_cm --iters=1 --no_conform=1 conv_opts --input_shape=1,128,64,64 --filter_shape=16,128,1,1 --in_pad=0 --out_pad=0 --stride=1,1,1,1 --data_type=fp16 --input_layout=nhwc --output_layout=nhwc --no_bias  conv_cm_opts --dump_asm --print_reg_usage --lws=1,1,1 --block_w=8 --block_oc=16 --large_grf`
-
-> this command uses WEIGHTS_IN_OPTIMAL_FORMAT,HAS_LEFTOVER;
+> this command uses WEIGHTS_IN_OPTIMAL_FORMAT,HAS_LEFTOVER; functionally work but conformance false
 
 ## DML command line
 `cross_runner.exe  --type=conv_dml --iters=1 --no_conform=0 conv_opts --input_shape=1,64,254,254 --filter_shape=64,64,3,3 --in_pad=0 --out_pad=0 --stride=1,1,1,1 --data_type=fp16 --input_layout=nhwc --output_layout=nhwc --no_bias=0 --managed_weights --activation=1 --reuse_cmd=1`
