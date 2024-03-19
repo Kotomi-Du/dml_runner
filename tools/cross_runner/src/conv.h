@@ -119,26 +119,27 @@ public:
         DML_OPERATOR_DESC activation_desc{};
         DML_ACTIVATION_RELU_OPERATOR_DESC relu_op{};
         DML_ACTIVATION_LEAKY_RELU_OPERATOR_DESC leakyrelu_op{};
-        if (activation == ActivationType::eRelu)
+        switch(activation)
         {
-            relu_op.InputTensor = nullptr;
-            relu_op.OutputTensor = nullptr;
-            activation_desc.Type = DML_OPERATOR_ACTIVATION_RELU;
-            activation_desc.Desc = &relu_op;
+            case ActivationType::eRelu:
+                relu_op.InputTensor = nullptr;
+                relu_op.OutputTensor = nullptr;
+                activation_desc.Type = DML_OPERATOR_ACTIVATION_RELU;
+                activation_desc.Desc = &relu_op;
+                break;
+            case  ActivationType::eLeakyRelu:
+                leakyrelu_op.InputTensor = nullptr;
+                leakyrelu_op.OutputTensor = nullptr;
+                leakyrelu_op.Alpha = activation_alpha;
+                activation_desc.Type = DML_OPERATOR_ACTIVATION_LEAKY_RELU;
+                activation_desc.Desc = &leakyrelu_op;
+                break;
+            default:
+                activation_desc.Type = DML_OPERATOR_INVALID;
+                //throw_with_msg("Unknown activation type!");
+                break;
         }
-        if (activation == ActivationType::eLeakyRelu)
-        {
-            leakyrelu_op.InputTensor = nullptr;
-            leakyrelu_op.OutputTensor = nullptr;
-            leakyrelu_op.Alpha = activation_alpha;
-            activation_desc.Type = DML_OPERATOR_ACTIVATION_LEAKY_RELU;
-            activation_desc.Desc = &leakyrelu_op;
-        }
-        else
-        {
-            activation_desc.Type = DML_OPERATOR_INVALID;
-            //throw_with_msg("Unknown activation type!");
-        }
+       
 
         desc.FusedActivation = activation_desc.Type == DML_OPERATOR_INVALID ? nullptr : &activation_desc;
         DML_OPERATOR_DESC dml_operator_desc{};
@@ -348,7 +349,7 @@ public:
         DataLayout output_layout;
         TensorShape input_shape;
         TensorShape filter_shape;
-        const DataLayout filter_layout = DataLayout::eNCHW;
+        const DataLayout filter_layout = DataLayout::eNHWC;// eNCHW;
         ActivationType activation = ActivationType::eNone;
         std::uint32_t in_pad;
         std::uint32_t out_pad;

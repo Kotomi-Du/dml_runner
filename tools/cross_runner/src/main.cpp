@@ -246,8 +246,9 @@ int main()
             performance_collector.add_timestamp(command_list.Get());
             node->execute(command_list.Get());
             performance_collector.add_timestamp(command_list.Get());
+            close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
         }
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+       
 
         const auto device_remove_reason = d3d12_device->GetDeviceRemovedReason();
         if (device_remove_reason != S_OK)
