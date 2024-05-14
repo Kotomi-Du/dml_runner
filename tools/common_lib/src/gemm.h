@@ -1311,7 +1311,6 @@ public:
         std::unordered_map<int, dnnl::memory> args;
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
-        args.insert({ DNNL_ARG_BIAS, input_c_memory });
         std::size_t post_ops_idx = 0ull;
        /* if (input_c_memory)
         {

@@ -136,7 +136,6 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     std::unordered_map<int, dnnl::memory> args;
     args.insert({ DNNL_ARG_SRC, input_a_memory });
     args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
-    args.insert({ DNNL_ARG_BIAS, input_c_memory });
     args.insert({ DNNL_ARG_DST, output_memory });
 
     std::size_t post_ops_idx = 0ull;
