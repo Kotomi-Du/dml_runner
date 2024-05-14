@@ -101,10 +101,10 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
 
     }
 
-    if (input_c_memory)
+  /*  if (input_c_memory)
     {
         po.append_binary(dnnl::algorithm::binary_add, input_c_memory.get_desc());
-    }
+    }*/
 
     //if (has_scaling_factors())
     //{
@@ -124,7 +124,8 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     dnnl::matmul::primitive_desc matmul_desc(engine,
         input_a_memory.get_desc(),
         input_b_memory.get_desc(),
-        {}, // we dont use bias for c_tensir
+        input_c_memory ? input_c_memory.get_desc(): dnnl::memory::desc{},
+        //{}, // we dont use bias for c_tensir
         output_memory.get_desc(),
         attrs
     );
@@ -135,14 +136,15 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     std::unordered_map<int, dnnl::memory> args;
     args.insert({ DNNL_ARG_SRC, input_a_memory });
     args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
+    args.insert({ DNNL_ARG_BIAS, input_c_memory });
     args.insert({ DNNL_ARG_DST, output_memory });
 
     std::size_t post_ops_idx = 0ull;
-    if (input_c_memory)
+   /* if (input_c_memory)
     {
         args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory});
         post_ops_idx++;
-    }
+    }*/
 
     /*if (has_scaling_factors())
     {

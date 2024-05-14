@@ -1008,10 +1008,10 @@ public:
             //    attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
             //}
 
-            if (has_c_tensor())
-            {
-                ops.append_binary(dnnl::algorithm::binary_add, input_c_memory_desc_.value());
-            }
+            //if (has_c_tensor())
+            //{
+            //    ops.append_binary(dnnl::algorithm::binary_add, input_c_memory_desc_.value());
+            //}
 
             // beta
             if (params_.beta != 0.0f) {
@@ -1036,7 +1036,8 @@ public:
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
             input_b_memory_desc_,
-            dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
+            has_c_tensor()? input_c_memory_desc_.value() : dnnl::memory::desc{},
+            //dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
             output_memory_desc_,
             attr
         );
@@ -1310,11 +1311,12 @@ public:
         std::unordered_map<int, dnnl::memory> args;
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
+        args.insert({ DNNL_ARG_BIAS, input_c_memory });
         std::size_t post_ops_idx = 0ull;
-        if (input_c_memory)
+       /* if (input_c_memory)
         {
             args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
-            post_ops_idx++;
+            ost_ops_idx++;
         }
 
       /*  if (has_scaling_factors())
