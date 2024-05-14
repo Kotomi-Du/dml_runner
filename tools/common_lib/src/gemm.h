@@ -703,10 +703,10 @@ public:
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
-        auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+        auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_c_.Get(),
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
         command_list->ResourceBarrier(1, &readback_output_barrirer);
-        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+        command_list->CopyResource(readback_buffer.Get(), input_buffer_c_.Get());
         close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
         std::vector<std::byte> data_out(tensor_out_bytes_width);
@@ -974,12 +974,7 @@ public:
                 input_b_memory_desc_ = convert_to_ncwh_format(input_b_memory_desc_);
             }
         }
-        output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
-
-        if (has_c_tensor())
-        {
-            input_c_memory_desc_.emplace(to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt));
-        }
+        input_c_memory_desc_ = to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt);  //c memory is also used for output memory
         
         const dnnl::primitive_attr attr = [this]()
         {
@@ -1002,26 +997,11 @@ public:
             if (params_.alpha != 1.0f) {
                 ops.append_eltwise(dnnl::algorithm::eltwise_linear, params_.alpha, 0.0f);
             }
-            //if (has_scaling_factors())
-            //{
-            //    
-            //    attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
-            //}
-
-            //if (has_c_tensor())
-            //{
-            //    ops.append_binary(dnnl::algorithm::binary_add, input_c_memory_desc_.value());
-            //}
 
             // beta
             if (params_.beta != 0.0f) {
                 ops.append_sum( params_.beta );
             }
-            /*if (has_scaling_factors())
-            {
-                ops.append_binary(dnnl::algorithm::binary_mul, 
-                    to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
-            }*/
 
             if (params_.activation.type != ActivationType::eUnknown)
             {
@@ -1036,9 +1016,8 @@ public:
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
             input_b_memory_desc_,
-            has_c_tensor()? input_c_memory_desc_.value() : dnnl::memory::desc{},
-            //dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
-            output_memory_desc_,
+            dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
+            input_c_memory_desc_,
             attr
         );
         std::cout << "dnnl-umd kernel impl: " << matmul_desc.impl_info_str() << std::endl;
@@ -1060,8 +1039,8 @@ public:
             if (params_.c_managed)
             {
                 assert(!"params_.c_managed is nt not tested option, most likely bugs hidden somewhere!");
-                assert(input_c_memory_desc_.has_value());
-                ret += input_c_memory_desc_->get_size();
+                //assert(input_c_memory_desc_.has_value());
+                //ret += input_c_memory_desc_->get_size();
             }
             return ret;
         }();
@@ -1096,25 +1075,12 @@ public:
 
         if (params_.c_managed)
         {
-            assert(input_c_memory_desc_.has_value());
+            assert(!"params_.c_managed is supported yet");
+            //assert(input_c_memory_desc_.has_value());
             // its just a copy
-            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, input_c_memory_desc_.value(), dnnl_engine_, input_c_memory_desc_.value());
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, input_c_memory_desc_, dnnl_engine_, input_c_memory_desc_);
             reorder_input_c_ = dnnl::reorder(reorder_desc);
         }
-
-        /*if (has_scaling_factors())
-        {
-            const char* code_string =
-                "__attribute__((reqd_work_group_size(1, 1, 1))) "
-                "__kernel void copy_alphabeta(__global float* output, float alpha, float beta) "
-                "{"
-                "output[0] = alpha;"
-                "output[1] = beta;"
-                "}";
-
-            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alphabeta", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE::eOCL_STATELESS);
-            assert(copy_alpha_shader_);
-        }*/
     }
 
     std::uint32_t get_total_descriptor_count()override
@@ -1159,20 +1125,6 @@ public:
         auto umd_persistent_mem = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]) : iumd::custom_metacommand::UmdD3d12Memory{};
         std::size_t persistent_mem_offset = 0;
 
-        //if (has_scaling_factors())
-        //{
-        //    // hack for oneDNNL to have OneDNNL aligned with DirectML!
-        //    const float beta = has_c_tensor() ? params_.beta : 1.0f;
-        //    const float alpha = params_.alpha / beta;
-
-        //    copy_alpha_shader_->set_kernel_arg(0, &umd_persistent_mem);
-        //    copy_alpha_shader_->set_kernel_arg(1, iumd::IUMDPipelineStateObject::ScalarArgType{ sizeof(float), &alpha });
-        //    copy_alpha_shader_->set_kernel_arg(2, iumd::IUMDPipelineStateObject::ScalarArgType{ sizeof(float), &beta });
-        //    cmd.dispatch(copy_alpha_shader_.get(), { 1, 1, 1 }, { 1, 1, 1 });
-
-        //    persistent_mem_offset += 2 * sizeof(float);
-        //}
-
         // weights reorder
         if (reorder_input_b_)
         {  
@@ -1198,11 +1150,12 @@ public:
         // weights reorder
         if (reorder_input_c_)
         {
-            assert(input_c_memory_desc_.has_value());
+            assert(!"params_.c_managed is supported yet");
+            //assert(input_c_memory_desc_.has_value());
             auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
 
-            dnnl::memory input_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_input_mem);
-            dnnl::memory reorder_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_persistent_mem, persistent_mem_offset);
+            dnnl::memory input_memory = create_dnnl_memory(input_c_memory_desc_, umd_input_mem);
+            dnnl::memory reorder_memory = create_dnnl_memory(input_c_memory_desc_, umd_persistent_mem, persistent_mem_offset);
 
             std::unordered_map<int, dnnl::memory> args;
             args.insert({ DNNL_ARG_SRC, input_memory });
@@ -1226,11 +1179,18 @@ public:
             resources_list.push_back({ DescType::eUav, input_buffer_b_.Get()});
         }
 
-        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
-        if (input_buffer_c_ && !reorder_input_c_)
+        if(has_c_tensor() ) // output_buffer also uses input_buffer_c
         {
-            resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
+            if( !reorder_input_c_)
+            {
+                resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
+            }
         }
+        else
+        {
+             resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+        }
+
         if (temporary_buffer_)
         {
             resources_list.push_back({ DescType::eUav, temporary_buffer_.Get() });
@@ -1241,18 +1201,25 @@ public:
         auto umd_input_a_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_persitent_memory = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
         auto umd_input_b_memory_ = reorder_input_b_ ? umd_persitent_memory : iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_output_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_input_c_memory_ = [&]()
         {
-            if (input_buffer_c_ && !reorder_input_c_)
+            if (has_c_tensor())
+            {
+                if(!reorder_input_c_)
+                {
+                    return iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
+                }
+                else
+                {
+                    return umd_persitent_memory;
+                }
+                
+            }
+            else 
             {
                 return iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
             }
-            else if (reorder_input_c_)
-            {
-                return umd_persitent_memory;
-            }
-            return iumd::custom_metacommand::UmdD3d12Memory{};
+            
         }();
 
         //auto umd_alpha_beta_memory_ = umd_persitent_memory;
@@ -1268,14 +1235,7 @@ public:
         dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
 
         std::size_t persistent_mem_offset = 0;
-       /* dnnl::memory alpha_factor_memory{};
-        dnnl::memory beta_factor_memory{};
-        if (has_scaling_factors())
-        {
-            alpha_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, 0ull);
-            beta_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, sizeof(float));
-            persistent_mem_offset += 2 * sizeof(float);
-        }*/
+
         dnnl::memory input_b_memory = [&]()
         {
             std::size_t offset = 0ull;
@@ -1289,11 +1249,11 @@ public:
 
         dnnl::memory input_c_memory = [&]()
         {
-            if (has_c_tensor())
-            {
-                return create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_, reorder_input_c_ ? persistent_mem_offset : 0ull);
-            }
-            return dnnl::memory{};
+            // if (has_c_tensor())
+            // {
+                return create_dnnl_memory(input_c_memory_desc_, umd_input_c_memory_, reorder_input_c_ ? persistent_mem_offset : 0ull);
+            // }
+            // return dnnl::memory{};
         }();
 
         std::optional<dnnl::memory> scratchpad_memory;
@@ -1304,33 +1264,18 @@ public:
                 scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_));
             }
         }
-         
-
-        dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
 
         std::unordered_map<int, dnnl::memory> args;
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
         std::size_t post_ops_idx = 0ull;
-       /* if (input_c_memory)
-        {
-            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
-            ost_ops_idx++;
-        }
-
-      /*  if (has_scaling_factors())
-        {
-            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_factor_memory });
-            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, beta_factor_memory });
-            post_ops_idx++;
-        }*/
 
         if (scratchpad_memory_desc_)
         {
             args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory.value() });
         }
 
-        args.insert({ DNNL_ARG_DST, output_memory });
+        args.insert({ DNNL_ARG_DST, input_c_memory });
 
         gemm_.execute(stream, args);
     }
@@ -1371,8 +1316,7 @@ private:
 
     dnnl::memory::desc input_a_memory_desc_;
     dnnl::memory::desc input_b_memory_desc_;
-    dnnl::memory::desc output_memory_desc_;
-    std::optional<dnnl::memory::desc> input_c_memory_desc_;
+    dnnl::memory::desc input_c_memory_desc_;
     std::optional<dnnl::memory::desc> scratchpad_memory_desc_;
 
     ComPtr<ID3D12Resource> temporary_buffer_;
