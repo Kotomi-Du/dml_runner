@@ -77,6 +77,7 @@ struct CliOptions
 
 int main()
 {
+    std::cout << "DML_TARGET_VERSION:" << std::hex << DML_TARGET_VERSION << std::endl;
     constexpr const std::uint32_t MAX_ITERATIONS = 10'000;
 
     CliOptions opts;
